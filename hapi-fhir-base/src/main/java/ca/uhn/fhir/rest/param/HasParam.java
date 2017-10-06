@@ -1,0 +1,108 @@
+package ca.uhn.fhir.rest.param;
+
+import static org.apache.commons.lang3.StringUtils.defaultString;
+
+/*
+ * #%L
+ * HAPI FHIR - Core Library
+ * %%
+ * Copyright (C) 2014 - 2017 University Health Network
+ * %%
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ * #L%
+ */
+
+import ca.uhn.fhir.context.FhirContext;
+import ca.uhn.fhir.model.api.IQueryParameterType;
+import ca.uhn.fhir.rest.server.Constants;
+import ca.uhn.fhir.rest.server.exceptions.InvalidRequestException;
+
+/**
+ * Implementation of the _has method parameter
+ */
+public class HasParam extends BaseParam implements IQueryParameterType {
+
+	private String myOwningFieldName;
+	private String myParameterName;
+	private String myParameterValue;
+	private String myTargetResourceType;
+
+	public HasParam() {
+		super();
+	}
+
+
+	public HasParam(String theTargetResourceType, String theOwningFieldName, String theParameterName, String theParameterValue) {
+		this();
+		myTargetResourceType = theTargetResourceType;
+		myOwningFieldName = theOwningFieldName;
+		myParameterName = theParameterName;
+		myParameterValue = theParameterValue;
+	}
+
+
+	@Override
+	String doGetQueryParameterQualifier() {
+		return myTargetResourceType + ':' + myParameterName + ':' + myParameterValue;
+	}
+	
+	@Override
+	String doGetValueAsQueryToken(FhirContext theContext) {
+		return myParameterValue;
+	}
+
+	@Override
+	void doSetValueAsQueryToken(FhirContext theContext, String theParamName, String theQualifier, String theValue) {
+		String qualifier = defaultString(theQualifier);
+		if (!qualifier.startsWith(":")) {
+			throwInvalidSyntaxException(Constants.PARAM_HAS + qualifier);
+		}
+		int colonIndex0 = qualifier.indexOf(':', 1);
+		validateColon(qualifier, colonIndex0);
+		int colonIndex1 = qualifier.indexOf(':', colonIndex0 + 1);
+		validateColon(qualifier, colonIndex1);
+		
+		myTargetResourceType = qualifier.substring(1, colonIndex0);
+		myOwningFieldName = qualifier.substring(colonIndex0 + 1, colonIndex1);
+		myParameterName = qualifier.substring(colonIndex1 + 1);
+		myParameterValue = theValue;
+	}
+
+	public String getOwningFieldName() {
+		return myOwningFieldName;
+	}
+
+	public String getParameterName() {
+		return myParameterName;
+	}
+
+	public String getParameterValue() {
+		return myParameterValue;
+	}
+
+	public String getTargetResourceType() {
+		return myTargetResourceType;
+	}
+
+	private static void validateColon(String theParameterName, int colonIndex) {
+		if (colonIndex == -1) {
+			throwInvalidSyntaxException(theParameterName);
+		}
+	}
+
+
+	private static void throwInvalidSyntaxException(String theParameterName) {
+		throw new InvalidRequestException("Invalid _has parameter syntax: " + theParameterName);
+	}
+
+}
