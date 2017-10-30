@@ -1,5 +1,5 @@
 ## Running modified server for Image processing testing
-Note: The port assignments shown here must be used, as the 
+Note: The port assignments shown here **MUST** be used, as the 
 modified example server is a prototype only; some things are
 hard coded.
 ### Set up a dcm4chee server for testing

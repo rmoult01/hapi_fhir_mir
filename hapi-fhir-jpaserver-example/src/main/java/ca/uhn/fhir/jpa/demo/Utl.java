@@ -6,6 +6,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonParser;
 import org.apache.commons.io.IOUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.hl7.fhir.dstu3.model.*;
 
 import java.io.StringWriter;
@@ -26,12 +27,17 @@ public class Utl implements Cmn {
 
 	/**
 	 * Gets MRN for patient reference.
-	 * @param fhirPid the patient resource id.
+	 * @param pid the patient resource id
 	 * @return the MRN (first MRN for now)
 	 * @throws Exception on error, including patient not found.
 	 */
-	public static String getPatientMrn(String fhirPid) throws Exception {
-		String body = fhirQuery("/Patient/" + fhirPid);
+	public static String getPatientMrn(String pid) throws Exception {
+
+		// TODO this is the cludge, until we get consistent test data
+		if (pid.equals("smart-1288992")) pid = "34952";
+
+		String body = fhirQuery("/Patient/" + pid);
+
 		FhirContext ctx = FhirContext.forDstu3();
 
 // Create a JSON parser
@@ -213,5 +219,47 @@ public class Utl implements Cmn {
 			throw new Exception("Response body empty");
 
 		return responseBody;
+	}
+
+	/**
+	 * Determines if a requested scope has been granted.
+	 * @param requestedResource FHIR Resource name or "*" for all FHIR resources
+	 * @param requestedAccess "read", "write", or "*" for read and write
+	 * @param grantedScopes All scopes granted by SMART.
+	 * @return true if requested scope has been granted, false otherwise,
+	 * including errors.
+	 */
+	public static boolean isScopeAuthorized(String requestedResource, String requestedAccess, String grantedScopes) {
+		requestedResource = StringUtils.trimToEmpty(requestedResource);
+		requestedAccess = StringUtils.trimToEmpty(requestedAccess.toLowerCase());
+		grantedScopes = StringUtils.trimToEmpty(grantedScopes);
+		if (requestedResource.isEmpty() || grantedScopes.isEmpty()) return false;
+		if (isOneOf(requestedAccess, "read", "write", "*") == false) return false;
+		boolean needRead = true;
+		boolean needWrite = true;
+		if (requestedAccess.equals("read")) needWrite = false;
+		if (requestedAccess.equals("write")) needRead = false;
+		for (String grantedScope : grantedScopes.split("\\s+")) {
+			String[] tokens = grantedScope.split("[/\\.]");
+			String resource = tokens[1];
+			String grant = tokens[2];
+			if (isOneOf(resource, "*", requestedResource) == false) continue;
+			if (grant.equals("*")) return true;
+			if (grant.equals("read")) needRead = false;
+			if (grant.equals("write")) needWrite = false;
+			if (!needRead && !needWrite) return true;
+		}
+		return false;
+	}
+
+	/**
+	 * Does string match any of the matches
+	 * @param str to example
+	 * @param matches to match against
+	 * @return true if string is equal to any of the matches, false otherwise.
+	 */
+	public static boolean isOneOf(String str, String... matches) {
+		for (String match : matches) if (str.equals(match)) return true;
+		return false;
 	}
 }

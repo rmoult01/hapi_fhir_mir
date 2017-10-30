@@ -115,7 +115,7 @@ public abstract class RequestDetails {
 	}
 
 	/**
-	 * The fhir server base url, independant of the query being executed
+	 * The fhir server base url, independent of the query being executed
 	 * 
 	 * @return the fhir server base url
 	 */

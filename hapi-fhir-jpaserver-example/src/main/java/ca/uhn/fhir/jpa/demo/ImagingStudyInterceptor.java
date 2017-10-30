@@ -13,14 +13,17 @@ import ca.uhn.fhir.rest.server.interceptor.InterceptorAdapter;
 import com.google.gson.*;
 
 import org.apache.commons.io.IOUtils;
+import org.apache.commons.lang3.StringUtils;
 import org.hl7.fhir.dstu3.model.*;
 
 
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import java.io.OutputStream;
 import java.io.StringWriter;
 import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
 import java.net.URL;
 import java.text.SimpleDateFormat;
 import java.util.*;
@@ -46,18 +49,22 @@ public class ImagingStudyInterceptor extends InterceptorAdapter implements Cmn {
 		RestOperationTypeEnum ot = theRequestDetails.getRestOperationType();
 		if (ot == null || ot != RestOperationTypeEnum.SEARCH_TYPE) return true;
 		System.out.println("ImageStudy intercepted");
+
+		authenticate(theRequestDetails, theRequest, theResponse);
+
 		String url = theRequestDetails.getCompleteUrl();
 
 		Map<String, String[]> fhirParams = theRequestDetails.getParameters();
 
+		String pid = null;
 		String mrn = null;
 		String lu = null;
 		String patientReferenceStr = null;
 
 		for (String key : fhirParams.keySet()) {
 			String[] value = fhirParams.get(key);
-			if (key.equalsIgnoreCase("Patient")) {
-				mrn = Utl.getPatientMrn(value[0]);
+			if (key.equalsIgnoreCase("patient")) {
+				pid = value[0];
 				continue;
 			}
 			if (key.equalsIgnoreCase("_lastUpdated")) {
@@ -65,8 +72,10 @@ public class ImagingStudyInterceptor extends InterceptorAdapter implements Cmn {
 			}
 		}
 
-		if (mrn == null)
+		if (pid == null)
 			throw new InvalidRequestException("Required parameter 'patient' not found.");
+
+		mrn = Utl.getPatientMrn(pid);
 
 		String body = wadoQuery(mrn, lu, patientReferenceStr, url);
 		theResponse.addHeader("Content-Type", "application/fhir+json");
@@ -198,5 +207,87 @@ public class ImagingStudyInterceptor extends InterceptorAdapter implements Cmn {
 
 	private boolean isThere(String val) {
 		return val != null && val.isEmpty() == false;
+	}
+
+	// properties for authentication
+
+	private static final boolean AUTHENTICATION_ENABLED = true;
+	private static final String  INTROSPECTION_SERVICE_URL = "http://localhost:9004/api/introspect";
+
+	private void authenticate(RequestDetails theRequestDetails,
+									  HttpServletRequest theRequest, HttpServletResponse theResponse)
+		throws AuthenticationException, InvalidRequestException {
+
+		if (!AUTHENTICATION_ENABLED) return;
+
+		// Get, validate pid parameter
+		Map<String, String[]> requestParameters = theRequestDetails.getParameters();
+		if (requestParameters == null) throw new AuthenticationException("required parameter missing");
+		if (requestParameters.containsKey("patient") == false)
+			throw new AuthenticationException("required parameter 'patient' missing");
+		String pid = StringUtils.trimToEmpty(requestParameters.get("patient")[0]);
+		if (pid.isEmpty()) throw new AuthenticationException("required parameter patient empty");
+
+		// Get, validate authorization token
+		List<String> authHeaderFields = theRequestDetails.getHeaders("Authorization");
+		if (authHeaderFields == null) throw new AuthenticationException("required header 'Authorization' missing");
+		if (authHeaderFields.size() != 1) throw new AuthenticationException("Authorization header invalid format");
+		String authTokenType = StringUtils.trimToEmpty(authHeaderFields.get(0));
+		if (StringUtils.startsWithIgnoreCase(authTokenType, "Bearer ") == false)
+			throw new AuthenticationException("Invalid Authorization token type");
+		String authToken = StringUtils.trimToEmpty(authTokenType.substring(6));
+		if (authToken.isEmpty()) throw new AuthenticationException("Authorization token missing");
+
+		// Query token instrospection service
+		URL url = null;
+		try {
+			url = new URL(INTROSPECTION_SERVICE_URL);
+			String postData = "token=" + authToken + "&patient=" + pid;
+			HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+			conn.setUseCaches(false);
+			conn.setDoInput(true);
+			conn.setDoOutput(true);
+			conn.setRequestMethod("POST");
+			conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+			conn.setRequestProperty("Content-Length", "" + postData.getBytes().length);
+			conn.setRequestProperty("Content-Language", "en-US");
+			OutputStream os = conn.getOutputStream();
+			os.write(postData.getBytes("UTF-8"));
+			os.close();
+			conn.connect();
+
+		if (conn.getResponseCode() != 200) throw new AuthenticationException("Authorization failed");
+
+			Map<String, List<String>> responseHeaders = conn.getHeaderFields();
+			List<String> responseContentTypes = responseHeaders.get("Content-Type");
+			if (responseContentTypes == null)
+				throw new AuthenticationException("Required header missing, 'Content-Type'");
+			if (responseContentTypes.size() != 1)
+				throw new AuthenticationException("Required header invalid, 'Content-Type'");
+			String responseContentType = responseContentTypes.get(0);
+			if (responseContentType == null)
+				throw new AuthenticationException("Required header empty, 'Content-Type'");
+			if (responseContentType.contains("json") == false)
+				throw new AuthenticationException("Content-Type " + responseContentType + " not supported");
+
+			StringWriter writer = new StringWriter();
+			IOUtils.copy(conn.getInputStream(), writer, "UTF-8");
+			String responseBody = writer.toString();
+			if (responseBody == null || responseBody.isEmpty())
+				throw new AuthenticationException("Response body empty");
+
+			JsonObject responseJson = (JsonObject) new JsonParser().parse(responseBody);
+			JsonElement scope = responseJson.get("scope");
+			if (scope == null) throw new AuthenticationException("Authorization failed");
+			String scopes = scope.getAsString();
+			if (Utl.isScopeAuthorized("ImagingStudy", "read", scopes)) return;
+			throw new AuthenticationException("Authorization failed");
+
+		} catch (MalformedURLException e ) {
+		throw new AuthenticationException(e.getMessage());
+	} catch (IOException io) {
+		throw new AuthenticationException(io.getMessage());
+	}
+
 	}
 }
